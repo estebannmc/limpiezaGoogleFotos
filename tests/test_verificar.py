@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from limpieza_fotos import cli, reporte
+from limpieza_fotos import cli, reporte, verificar
 from limpieza_fotos.verificar import (
-    ERROR, OK, PARCIAL, SIN_ARCHIVO, Resultado, evaluar_grupo, verificar_archivo,
+    ERROR, OK, PARCIAL, SIN_ARCHIVO, Resultado, evaluar_grupo, verificar_archivo, video_danado,
 )
 
 
@@ -34,10 +34,27 @@ def test_archivo_vacio(tmp_path):
     assert verificar_archivo(ruta).estado == ERROR
 
 
-def test_formato_sin_verificacion(tmp_path):
+def test_raw_sin_rawpy_es_parcial(tmp_path, monkeypatch):
+    monkeypatch.setattr(verificar, "_RAWPY_DISPONIBLE", False)
     ruta = tmp_path / "a.dng"
     ruta.write_bytes(b"raw")
     assert verificar_archivo(ruta).estado == PARCIAL
+
+
+@pytest.mark.skipif(not verificar._RAWPY_DISPONIBLE, reason="requiere rawpy")
+def test_raw_danado(tmp_path):
+    ruta = tmp_path / "a.dng"
+    ruta.write_bytes(b"II*\x00" + b"\x00" * 100)
+    assert verificar_archivo(ruta).estado == ERROR
+
+
+def test_avisos_inofensivos_de_ffmpeg():
+    assert not video_danado(
+        "[null @ 0x1e2c] Application provided invalid, non monotonically increasing dts to muxer\n"
+        "[hevc @ 0x3d4f] Could not find ref with POC 12\n"
+    )
+    assert video_danado("[mov,mp4 @ 0x28] stream 0, offset 0x28ed: partial file\n")
+    assert video_danado("Decoding error: Invalid data found when processing input\n")
 
 
 @pytest.mark.skipif(not shutil.which("ffmpeg"), reason="requiere ffmpeg")

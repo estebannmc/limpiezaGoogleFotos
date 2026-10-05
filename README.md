@@ -34,6 +34,9 @@ como "parcial" y no se eliminan:
 winget install Gyan.FFmpeg
 ```
 
+Las fotos RAW (`.dng`, etc.) se verifican con `rawpy`, que se instala con
+`requirements.txt`. Si no se pudo instalar, esas fotos quedan como "parcial".
+
 No hace falta ejecutar `playwright install`, porque el script usa el Chrome
 instalado.
 
@@ -53,7 +56,7 @@ Al terminar muestra un resumen por estado:
 | Estado        | Significado                                                       | ¿Se elimina? |
 |---------------|-------------------------------------------------------------------|--------------|
 | `ok`          | Todos los archivos del elemento se abren completos                | Sí           |
-| `parcial`     | El archivo existe pero su contenido no se pudo comprobar (RAW, video sin FFmpeg) | Solo con `--incluir-parcial` |
+| `parcial`     | El archivo existe pero su contenido no se pudo comprobar (video sin FFmpeg, RAW sin rawpy) | Solo con `--incluir-parcial` |
 | `error`       | Algún archivo está vacío, cortado o dañado                        | No           |
 | `sin_archivo` | Hay JSON pero no se encontró la foto en la carpeta                | No           |
 

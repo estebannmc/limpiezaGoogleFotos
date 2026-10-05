@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from collections import defaultdict
@@ -17,6 +18,16 @@ SIN_ARCHIVO = "sin_archivo"
 
 EXT_PILLOW = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
 EXT_HEIF = {".heic", ".heif", ".avif"}
+EXT_RAW = {".dng", ".raw", ".cr2", ".cr3", ".nef", ".arw"}
+
+# Mensajes de FFmpeg que indican un video cortado o dañado. Otros avisos
+# (por ejemplo "non monotonically increasing dts" o "Could not find ref with
+# POC", que salen al empezar a leer a mitad del video) no son un problema.
+_RE_VIDEO_DANADO = re.compile(
+    r"partial file|invalid data found|invalid nal unit size|error splitting the input"
+    r"|moov atom not found|error reading header|truncat",
+    re.IGNORECASE,
+)
 
 try:
     import pillow_heif
@@ -25,6 +36,13 @@ try:
     _HEIF_DISPONIBLE = True
 except ImportError:
     _HEIF_DISPONIBLE = False
+
+try:
+    import rawpy
+
+    _RAWPY_DISPONIBLE = True
+except ImportError:
+    _RAWPY_DISPONIBLE = False
 
 
 @dataclass(frozen=True)
@@ -46,6 +64,10 @@ def verificar_archivo(ruta: Path) -> Resultado:
         return _verificar_imagen(ruta)
     if ext in EXT_HEIF:
         return Resultado(PARCIAL, "Falta pillow-heif para verificar HEIC")
+    if ext in EXT_RAW and _RAWPY_DISPONIBLE:
+        return _verificar_raw(ruta)
+    if ext in EXT_RAW:
+        return Resultado(PARCIAL, "Falta rawpy para verificar fotos RAW (solo tamaño)")
     if ext in EXT_VIDEO:
         return _verificar_video(ruta)
     return Resultado(PARCIAL, "Formato sin verificación de contenido (solo tamaño)")
@@ -63,6 +85,15 @@ def _verificar_imagen(ruta: Path) -> Resultado:
             imagen.load()
     except Exception as e:
         return Resultado(ERROR, f"Imagen dañada: {e}")
+    return Resultado(OK)
+
+
+def _verificar_raw(ruta: Path) -> Resultado:
+    try:
+        with rawpy.imread(str(ruta)) as raw:
+            raw.raw_image_visible.max()  # obliga a leer todos los datos
+    except Exception as e:
+        return Resultado(ERROR, f"RAW dañado: {e}")
     return Resultado(OK)
 
 
@@ -98,9 +129,17 @@ def _verificar_video(ruta: Path) -> Resultado:
         )
     except (OSError, subprocess.TimeoutExpired) as e:
         return Resultado(ERROR, f"ffmpeg falló: {e}")
-    if r.returncode != 0 or r.stderr.strip():
-        return Resultado(ERROR, f"Final del video dañado: {_primera_linea(r.stderr)}")
+    if r.returncode != 0 or video_danado(r.stderr):
+        motivo = next(
+            (linea for linea in r.stderr.splitlines() if _RE_VIDEO_DANADO.search(linea)),
+            _primera_linea(r.stderr),
+        )
+        return Resultado(ERROR, f"Final del video dañado: {motivo.strip()[:200]}")
     return Resultado(OK)
+
+
+def video_danado(salida_ffmpeg: str) -> bool:
+    return _RE_VIDEO_DANADO.search(salida_ffmpeg) is not None
 
 
 def _primera_linea(texto: str) -> str:
