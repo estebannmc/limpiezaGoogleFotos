@@ -28,13 +28,29 @@ HOST_FOTOS = "photos.google.com"
 RE_BOTON_ELIMINAR = re.compile(
     r"^(Delete|Eliminar|Borrar|Move to trash|Mover a la papelera)$", re.IGNORECASE
 )
-# Botón del diálogo de confirmación.
+# Botón de confirmación dentro del diálogo ("Entiendo; confirmar", "Mover a la papelera"...).
 RE_CONFIRMAR = re.compile(
-    r"^(Move to trash|Mover a la papelera|Enviar a la papelera|Trasladar a la papelera"
-    r"|Delete|Eliminar|Borrar)$",
+    r"confirm|entiendo|understand|papelera|trash|eliminar|delete|borrar|quitar|remove",
     re.IGNORECASE,
 )
-SELECTOR_DIALOGO = '[role="dialog"], [role="alertdialog"]'
+# Si el diálogo no está marcado como tal, solo se aceptan textos que no puedan
+# confundirse con el botón de eliminar de la barra.
+RE_CONFIRMAR_SIN_DIALOGO = re.compile(r"confirm|entiendo|understand|papelera|trash", re.IGNORECASE)
+SELECTOR_DIALOGO = '[role="dialog"], [role="alertdialog"], [aria-modal="true"]'
+CARPETA_DIAGNOSTICO = Path("diagnostico")
+
+# Lista los botones y diálogos visibles para entender la página cuando algo falla.
+_JS_DIAGNOSTICO = """() => {
+  const visible = e => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+  const texto = (e, n) => (e.getAttribute('aria-label') || e.innerText || '')
+      .trim().replace(/\\s+/g, ' ').slice(0, n);
+  const botones = [...document.querySelectorAll('button, [role="button"]')]
+      .filter(visible).map(e => texto(e, 50)).filter(Boolean);
+  const dialogos = [...document.querySelectorAll(
+      '[role="dialog"], [role="alertdialog"], [aria-modal="true"]')]
+      .filter(visible).map(e => (e.getAttribute('role') || 'modal') + ': ' + texto(e, 150));
+  return {botones: [...new Set(botones)].slice(0, 30), dialogos: dialogos.slice(0, 5)};
+}"""
 
 
 class SesionCerrada(RuntimeError):
@@ -164,21 +180,56 @@ class GooglePhotos:
             return "no_encontrado", "Google Fotos no muestra este elemento"
         boton = self._boton_eliminar()
         if boton is None:
-            return "fallo", "No se encontró el botón de eliminar"
+            return "fallo", "No se encontró el botón de eliminar. " + self._diagnostico(url)
+        nombre_boton = _nombre(boton)
         boton.click()
 
-        confirmar = self._primer_visible(
-            self.page.locator(SELECTOR_DIALOGO).get_by_role("button", name=RE_CONFIRMAR),
-            segundos=10,
-        )
+        confirmar = self._boton_confirmar(nombre_boton, segundos=10)
         if confirmar is None:
+            diagnostico = self._diagnostico(url)
             self.page.keyboard.press("Escape")
-            return "fallo", "No apareció el diálogo de confirmación"
+            return "fallo", "No apareció el diálogo de confirmación. " + diagnostico
         confirmar.click()
 
         try:
             confirmar.wait_for(state="hidden", timeout=10_000)
         except Exception:
-            return "fallo", "El diálogo de confirmación no se cerró"
+            return "fallo", "El diálogo de confirmación no se cerró. " + self._diagnostico(url)
         self.page.wait_for_timeout(1000)
         return "eliminado", "Movido a la papelera de Google Fotos"
+
+    def _boton_confirmar(self, nombre_boton_eliminar: str, segundos: float):
+        en_dialogo = self.page.locator(SELECTOR_DIALOGO).get_by_role("button", name=RE_CONFIRMAR)
+        en_pagina = self.page.get_by_role("button", name=RE_CONFIRMAR_SIN_DIALOGO)
+        fin = time.monotonic() + segundos
+        while time.monotonic() < fin:
+            for elemento in en_dialogo.all():
+                if elemento.is_visible():
+                    return elemento
+            for elemento in en_pagina.all():
+                # El propio botón de la barra no cuenta como confirmación.
+                if elemento.is_visible() and _nombre(elemento) != nombre_boton_eliminar:
+                    return elemento
+            self.page.wait_for_timeout(300)
+        return None
+
+    def _diagnostico(self, url: str) -> str:
+        """Guarda una captura y resume los botones y diálogos visibles."""
+        CARPETA_DIAGNOSTICO.mkdir(exist_ok=True)
+        captura = CARPETA_DIAGNOSTICO / f"{id_foto(url)[:40]}.png"
+        try:
+            self.page.screenshot(path=str(captura))
+            datos = self.page.evaluate(_JS_DIAGNOSTICO)
+        except Exception as e:
+            return f"(sin diagnóstico: {e})"
+        return (
+            f"Diálogos visibles: {datos['dialogos'] or 'ninguno'}. "
+            f"Botones visibles: {datos['botones']}. Captura: {captura}"
+        )
+
+
+def _nombre(elemento) -> str:
+    try:
+        return (elemento.get_attribute("aria-label") or elemento.inner_text() or "").strip()
+    except Exception:
+        return ""
