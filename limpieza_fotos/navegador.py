@@ -106,6 +106,11 @@ def id_foto(url: str) -> str:
     return urlparse(url).path.rstrip("/").rsplit("/", 1)[-1]
 
 
+def url_en_papelera(url: str) -> str:
+    """https://photos.google.com/photo/ID -> https://photos.google.com/trash/ID"""
+    return f"https://{HOST_FOTOS}/trash/{id_foto(url)}"
+
+
 class GooglePhotos:
     def __init__(self, chrome: Path, perfil: Path, puerto: int = 9222):
         self.chrome = chrome
@@ -219,27 +224,43 @@ class GooglePhotos:
         try:
             self.page.evaluate(_JS_OBSERVAR_TEXTOS)
             boton.click(timeout=10_000)
-            # Se aceptan los diálogos que aparezcan hasta ver una señal de que
-            # Google movió la foto: cambia la URL o aparece el aviso con "Deshacer".
-            fin = time.monotonic() + 6
+            # Se aceptan los diálogos que aparezcan. Si Google da una señal clara
+            # (cambia la URL o aparece el aviso con "Deshacer") no hace falta más.
+            fin = time.monotonic() + 3
             while time.monotonic() < fin:
                 self.page.wait_for_timeout(400)
                 confirmar = self._boton_confirmar()
                 if confirmar is not None:
                     confirmar.click(timeout=5_000)
+                    fin = max(fin, time.monotonic() + 2)
                     continue
                 if self._aviso_de_eliminacion(url):
                     self.page.wait_for_timeout(500)
                     return "eliminado", "Movido a la papelera de Google Fotos"
             textos = self._textos_nuevos()
+
+            # Google suele mover la foto sin ningún aviso: se comprueba si ya
+            # aparece en la papelera (solo se mira, no se aprieta nada ahí).
+            if self._aparece_en_papelera(url):
+                return "eliminado", "Movido a la papelera de Google Fotos (comprobado en la papelera)"
         except ErrorPlaywright as e:
             return "fallo", f"Error en la página: {str(e).splitlines()[0]}. " + self._diagnostico(url)
 
         return "fallo", (
-            "Google Fotos no mostró que la foto se moviera a la papelera "
-            "(si ya estaba en la papelera, es normal). "
+            "La foto no aparece en la papelera de Google Fotos. "
             f"Textos nuevos en la página: {textos or 'ninguno'}. " + self._diagnostico(url)
         )
+
+    def _aparece_en_papelera(self, url: str) -> bool:
+        self.page.wait_for_timeout(1000)
+        self.page.goto(url_en_papelera(url), wait_until="domcontentloaded")
+        self.page.wait_for_timeout(1500)
+        if not self._en_google_fotos():
+            raise SesionCerrada("Google pidió iniciar sesión de nuevo")
+        if id_foto(url) not in self.page.url:
+            return False
+        restaurar = self.page.get_by_role("button", name=RE_RESTAURAR)
+        return self._primer_visible(restaurar, segundos=5) is not None
 
     def _aviso_de_eliminacion(self, url: str) -> bool:
         if id_foto(url) not in self.page.url:
@@ -279,7 +300,7 @@ class GooglePhotos:
             return f"(sin diagnóstico: {e})"
         return (
             f"Diálogos visibles: {datos['dialogos'] or 'ninguno'}. "
-            f"Botones visibles: {datos['botones']}. Captura: {captura}"
+            f"Botones visibles: {datos['botones']}. URL: {self.page.url}. Captura: {captura}"
         )
 
 
