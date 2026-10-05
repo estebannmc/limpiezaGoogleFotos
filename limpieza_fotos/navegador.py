@@ -24,20 +24,26 @@ from urllib.parse import urlparse
 URL_INICIO = "https://photos.google.com/"
 HOST_FOTOS = "photos.google.com"
 
-# Botón de la barra superior de la foto (aria-label según el idioma).
-RE_BOTON_ELIMINAR = re.compile(
-    r"^(Delete|Eliminar|Borrar|Move to trash|Mover a la papelera)$", re.IGNORECASE
-)
-# Botones que aceptan un diálogo después de eliminar ("Entendido; continuar",
-# "Mover a la papelera"...). Solo se buscan dentro de diálogos.
+# Botón de la barra superior de la foto. Solo se acepta "Mover a la papelera":
+# un "Eliminar" a secas podría ser el borrado definitivo de la vista de papelera.
+RE_BOTON_ELIMINAR = re.compile(r"^(Mover a la papelera|Move to trash)$", re.IGNORECASE)
+# Botones que aceptan un diálogo después de eliminar ("Entendido; continuar"...).
+# Solo se buscan dentro de diálogos.
 RE_CONFIRMAR = re.compile(
-    r"entend|entiendo|continu|confirm|acept|understand|got it|papelera|trash"
-    r"|eliminar|delete|borrar|quitar|remove|^ok$",
+    r"entend|entiendo|continu|confirm|acept|understand|got it|papelera|trash|^ok$",
     re.IGNORECASE,
 )
-RE_CANCELAR = re.compile(r"cancel", re.IGNORECASE)
+# Nunca se aprieta nada que cancele o que borre para siempre.
+RE_PROHIBIDO = re.compile(
+    r"cancel|definitiv|permanent|para siempre|forever|vaciar|empty", re.IGNORECASE
+)
 # Aviso que muestra Google Fotos cuando la foto ya se movió a la papelera.
-RE_AVISO_PAPELERA = re.compile(r"movid[oa]s? a la papelera|moved to (the )?trash", re.IGNORECASE)
+RE_AVISO_PAPELERA = re.compile(
+    r"(movid|movió|movio|enviad|moved|sent).{0,40}(papelera|trash)", re.IGNORECASE
+)
+RE_DESHACER = re.compile(r"^(deshacer|undo)$", re.IGNORECASE)
+# Botón que aparece al ver una foto que ya está en la papelera.
+RE_RESTAURAR = re.compile(r"restaur|restore", re.IGNORECASE)
 SELECTOR_DIALOGO = '[role="dialog"], [role="alertdialog"], [aria-modal="true"]'
 CARPETA_DIAGNOSTICO = Path("diagnostico")
 
@@ -174,6 +180,8 @@ class GooglePhotos:
         """Abre la foto y busca el botón de eliminar, sin tocarlo."""
         if not self._abrir_foto(url):
             return "no_encontrado", "Google Fotos no muestra este elemento"
+        if self._en_papelera():
+            return "ya_en_papelera", "La foto ya está en la papelera de Google Fotos"
         if self._boton_eliminar() is None:
             return "fallo", "No se encontró el botón de eliminar"
         return "listo", "Se encontró el botón de eliminar (no se tocó)"
@@ -183,39 +191,56 @@ class GooglePhotos:
 
         if not self._abrir_foto(url):
             return "no_encontrado", "Google Fotos no muestra este elemento"
+        if self._en_papelera():
+            return "ya_en_papelera", "La foto ya está en la papelera de Google Fotos"
         boton = self._boton_eliminar()
         if boton is None:
             return "fallo", "No se encontró el botón de eliminar. " + self._diagnostico(url)
 
         try:
             boton.click(timeout=10_000)
-            # Se aceptan los diálogos que aparezcan hasta que Google saque la
-            # foto de la pantalla (cambia la URL) o avise que la movió.
-            fin = time.monotonic() + 20
+            # Se aceptan los diálogos que aparezcan hasta ver una señal de que
+            # Google movió la foto: cambia la URL o aparece el aviso con "Deshacer".
+            fin = time.monotonic() + 5
             while time.monotonic() < fin:
                 self.page.wait_for_timeout(500)
-                if self._foto_eliminada(url):
+                if self._aviso_de_eliminacion(url):
                     self.page.wait_for_timeout(500)
                     return "eliminado", "Movido a la papelera de Google Fotos"
                 confirmar = self._boton_confirmar()
                 if confirmar is not None:
                     confirmar.click(timeout=5_000)
+
+            # Sin señal clara: se vuelve a abrir la foto (sin apretar nada) para
+            # comprobar si sigue disponible.
+            self.page.wait_for_timeout(1000)
+            if not self._abrir_foto(url) or self._en_papelera():
+                return "eliminado", "Movido a la papelera de Google Fotos (comprobado al reabrir)"
         except ErrorPlaywright as e:
             return "fallo", f"Error en la página: {str(e).splitlines()[0]}. " + self._diagnostico(url)
 
-        diagnostico = self._diagnostico(url)
-        self.page.keyboard.press("Escape")
-        return "fallo", "Google Fotos no movió la foto a la papelera. " + diagnostico
+        return "fallo", "Google Fotos no movió la foto a la papelera. " + self._diagnostico(url)
 
-    def _foto_eliminada(self, url: str) -> bool:
+    def _aviso_de_eliminacion(self, url: str) -> bool:
         if id_foto(url) not in self.page.url:
             return True
-        return self._primer_visible(self.page.get_by_text(RE_AVISO_PAPELERA), segundos=0) is not None
+        aviso = self.page.get_by_text(RE_AVISO_PAPELERA)
+        deshacer = self.page.get_by_role("button", name=RE_DESHACER)
+        return (
+            self._primer_visible(aviso, segundos=0) is not None
+            or self._primer_visible(deshacer, segundos=0) is not None
+        )
+
+    def _en_papelera(self) -> bool:
+        if "/trash" in self.page.url:
+            return True
+        restaurar = self.page.get_by_role("button", name=RE_RESTAURAR)
+        return self._primer_visible(restaurar, segundos=1) is not None
 
     def _boton_confirmar(self):
         botones = self.page.locator(SELECTOR_DIALOGO).get_by_role("button", name=RE_CONFIRMAR)
         for elemento in botones.all():
-            if elemento.is_visible() and not RE_CANCELAR.search(_nombre(elemento)):
+            if elemento.is_visible() and not RE_PROHIBIDO.search(_nombre(elemento)):
                 return elemento
         return None
 

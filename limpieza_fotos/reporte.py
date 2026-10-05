@@ -18,7 +18,7 @@ CAMPOS_REPORTE = ["estado", "titulo", "url", "detalle", "archivos"]
 CAMPOS_REGISTRO = ["fecha", "resultado", "titulo", "url", "detalle"]
 
 # Resultados del registro que no hace falta volver a intentar.
-RESULTADOS_FINALES = {"eliminado", "no_encontrado"}
+RESULTADOS_FINALES = {"eliminado", "no_encontrado", "ya_en_papelera"}
 
 
 @dataclass
