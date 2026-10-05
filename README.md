@@ -94,6 +94,23 @@ sesión, el proceso se detiene.
 Opciones útiles: `--limite N`, `--pausa 3` (segundos entre fotos),
 `--incluir-parcial`, `--chrome "C:\ruta\chrome.exe"`.
 
+## Si algo falla
+
+- **Google no deja iniciar sesión** ("este navegador puede no ser seguro"):
+  cerrá esa ventana de Chrome y abrila a mano con el mismo perfil, iniciá
+  sesión y dejala abierta. Después ejecutá el script, que se conecta a esa
+  ventana:
+
+  ```powershell
+  & "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --user-data-dir="$env:LOCALAPPDATA\limpiezaGoogleFotos\chrome-perfil" https://photos.google.com
+  ```
+
+- **"No se encontró el botón de eliminar"**: Google Fotos puede estar en
+  otro idioma o haber cambiado su página. Copiá el mensaje y ajustá los
+  textos en `limpieza_fotos/navegador.py`.
+- **Muchos videos como `parcial`**: falta FFmpeg. Después de instalarlo,
+  cerrá y volvé a abrir la consola, y ejecutá `verificar` otra vez.
+
 ## Precauciones
 
 - Lo eliminado va a la **papelera de Google Fotos** y se puede recuperar

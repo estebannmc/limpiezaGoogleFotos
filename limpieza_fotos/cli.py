@@ -18,6 +18,11 @@ MAXIMO_FALLOS_SEGUIDOS = 3
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Títulos con emojis no deben cortar el proceso en consolas de Windows.
+    for flujo in (sys.stdout, sys.stderr):
+        if hasattr(flujo, "reconfigure"):
+            flujo.reconfigure(errors="replace")
+
     parser = argparse.ArgumentParser(
         prog="limpieza_fotos",
         description="Verifica la copia local de Google Takeout y elimina de Google Fotos "
