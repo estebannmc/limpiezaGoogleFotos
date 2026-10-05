@@ -28,14 +28,16 @@ HOST_FOTOS = "photos.google.com"
 RE_BOTON_ELIMINAR = re.compile(
     r"^(Delete|Eliminar|Borrar|Move to trash|Mover a la papelera)$", re.IGNORECASE
 )
-# Botón de confirmación dentro del diálogo ("Entiendo; confirmar", "Mover a la papelera"...).
+# Botones que aceptan un diálogo después de eliminar ("Entendido; continuar",
+# "Mover a la papelera"...). Solo se buscan dentro de diálogos.
 RE_CONFIRMAR = re.compile(
-    r"confirm|entiendo|understand|papelera|trash|eliminar|delete|borrar|quitar|remove",
+    r"entend|entiendo|continu|confirm|acept|understand|got it|papelera|trash"
+    r"|eliminar|delete|borrar|quitar|remove|^ok$",
     re.IGNORECASE,
 )
-# Si el diálogo no está marcado como tal, solo se aceptan textos que no puedan
-# confundirse con el botón de eliminar de la barra.
-RE_CONFIRMAR_SIN_DIALOGO = re.compile(r"confirm|entiendo|understand|papelera|trash", re.IGNORECASE)
+RE_CANCELAR = re.compile(r"cancel", re.IGNORECASE)
+# Aviso que muestra Google Fotos cuando la foto ya se movió a la papelera.
+RE_AVISO_PAPELERA = re.compile(r"movid[oa]s? a la papelera|moved to (the )?trash", re.IGNORECASE)
 SELECTOR_DIALOGO = '[role="dialog"], [role="alertdialog"], [aria-modal="true"]'
 CARPETA_DIAGNOSTICO = Path("diagnostico")
 
@@ -155,12 +157,13 @@ class GooglePhotos:
 
     def _primer_visible(self, locator, segundos: float):
         fin = time.monotonic() + segundos
-        while time.monotonic() < fin:
+        while True:
             for elemento in locator.all():
                 if elemento.is_visible():
                     return elemento
+            if time.monotonic() >= fin:
+                return None
             self.page.wait_for_timeout(300)
-        return None
 
     def _boton_eliminar(self):
         return self._primer_visible(
@@ -176,41 +179,44 @@ class GooglePhotos:
         return "listo", "Se encontró el botón de eliminar (no se tocó)"
 
     def eliminar(self, url: str) -> tuple[str, str]:
+        from playwright.sync_api import Error as ErrorPlaywright
+
         if not self._abrir_foto(url):
             return "no_encontrado", "Google Fotos no muestra este elemento"
         boton = self._boton_eliminar()
         if boton is None:
             return "fallo", "No se encontró el botón de eliminar. " + self._diagnostico(url)
-        nombre_boton = _nombre(boton)
-        boton.click()
-
-        confirmar = self._boton_confirmar(nombre_boton, segundos=10)
-        if confirmar is None:
-            diagnostico = self._diagnostico(url)
-            self.page.keyboard.press("Escape")
-            return "fallo", "No apareció el diálogo de confirmación. " + diagnostico
-        confirmar.click()
 
         try:
-            confirmar.wait_for(state="hidden", timeout=10_000)
-        except Exception:
-            return "fallo", "El diálogo de confirmación no se cerró. " + self._diagnostico(url)
-        self.page.wait_for_timeout(1000)
-        return "eliminado", "Movido a la papelera de Google Fotos"
+            boton.click(timeout=10_000)
+            # Se aceptan los diálogos que aparezcan hasta que Google saque la
+            # foto de la pantalla (cambia la URL) o avise que la movió.
+            fin = time.monotonic() + 20
+            while time.monotonic() < fin:
+                self.page.wait_for_timeout(500)
+                if self._foto_eliminada(url):
+                    self.page.wait_for_timeout(500)
+                    return "eliminado", "Movido a la papelera de Google Fotos"
+                confirmar = self._boton_confirmar()
+                if confirmar is not None:
+                    confirmar.click(timeout=5_000)
+        except ErrorPlaywright as e:
+            return "fallo", f"Error en la página: {str(e).splitlines()[0]}. " + self._diagnostico(url)
 
-    def _boton_confirmar(self, nombre_boton_eliminar: str, segundos: float):
-        en_dialogo = self.page.locator(SELECTOR_DIALOGO).get_by_role("button", name=RE_CONFIRMAR)
-        en_pagina = self.page.get_by_role("button", name=RE_CONFIRMAR_SIN_DIALOGO)
-        fin = time.monotonic() + segundos
-        while time.monotonic() < fin:
-            for elemento in en_dialogo.all():
-                if elemento.is_visible():
-                    return elemento
-            for elemento in en_pagina.all():
-                # El propio botón de la barra no cuenta como confirmación.
-                if elemento.is_visible() and _nombre(elemento) != nombre_boton_eliminar:
-                    return elemento
-            self.page.wait_for_timeout(300)
+        diagnostico = self._diagnostico(url)
+        self.page.keyboard.press("Escape")
+        return "fallo", "Google Fotos no movió la foto a la papelera. " + diagnostico
+
+    def _foto_eliminada(self, url: str) -> bool:
+        if id_foto(url) not in self.page.url:
+            return True
+        return self._primer_visible(self.page.get_by_text(RE_AVISO_PAPELERA), segundos=0) is not None
+
+    def _boton_confirmar(self):
+        botones = self.page.locator(SELECTOR_DIALOGO).get_by_role("button", name=RE_CONFIRMAR)
+        for elemento in botones.all():
+            if elemento.is_visible() and not RE_CANCELAR.search(_nombre(elemento)):
+                return elemento
         return None
 
     def _diagnostico(self, url: str) -> str:

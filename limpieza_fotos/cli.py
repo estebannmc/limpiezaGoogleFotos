@@ -128,7 +128,8 @@ def comando_eliminar(args) -> int:
     else:
         print(f"Se van a MOVER A LA PAPELERA de Google Fotos {len(pendientes)} elementos "
               "cuya copia local fue verificada.")
-        print("La papelera de Google Fotos los conserva 60 días antes de borrarlos del todo.")
+        print("Se pueden restaurar desde la papelera de Google Fotos durante el plazo que "
+              "indica Google (hoy, 30 días).")
         if input('Escribí "SI" para continuar: ').strip().upper() != "SI":
             print("Cancelado.")
             return 1

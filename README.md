@@ -117,7 +117,7 @@ Opciones útiles: `--limite N`, `--pausa 3` (segundos entre fotos),
 ## Precauciones
 
 - Lo eliminado va a la **papelera de Google Fotos** y se puede recuperar
-  durante 60 días.
+  durante el plazo que indica Google (hoy, 30 días).
 - Takeout es tu única copia de esas fotos: conviene tener otra copia en
   otro disco o en otra nube.
 - Si una foto está en un álbum compartido, al eliminarla también desaparece
