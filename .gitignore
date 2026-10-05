@@ -22,3 +22,9 @@ exports/
 Thumbs.db
 .vscode/
 .idea/
+
+# Reportes generados por el script
+reporte.csv
+eliminados.csv
+sin_json.csv
+.pytest_cache/
