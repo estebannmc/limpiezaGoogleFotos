@@ -110,10 +110,14 @@ def comando_eliminar(args) -> int:
 
     estados_validos = {OK} | ({PARCIAL} if args.incluir_parcial else set())
     procesadas = reporte.urls_procesadas(args.registro)
+    fallidas = reporte.urls_con_resultado(args.registro, {"fallo"})
     pendientes = [
         f for f in reporte.leer_reporte(args.reporte)
         if f.estado in estados_validos and f.url not in procesadas
-    ][: args.limite]
+    ]
+    # Lo que ya falló se reintenta al final, para que no frene al resto.
+    pendientes.sort(key=lambda f: f.url in fallidas)
+    pendientes = pendientes[: args.limite]
     if not pendientes:
         print("No hay elementos verificados pendientes de eliminar.")
         return 0

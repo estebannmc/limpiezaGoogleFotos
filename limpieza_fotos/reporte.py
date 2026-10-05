@@ -81,11 +81,15 @@ def registrar(ruta: Path, resultado: str, fila: Fila, detalle: str = "") -> None
 
 
 def urls_procesadas(ruta: Path) -> set[str]:
+    return urls_con_resultado(ruta, RESULTADOS_FINALES)
+
+
+def urls_con_resultado(ruta: Path, resultados: set[str]) -> set[str]:
     if not ruta.exists():
         return set()
     with open(ruta, newline="", encoding=CODIFICACION) as f:
         return {
             r["url"]
             for r in csv.DictReader(f, delimiter=SEPARADOR)
-            if r["resultado"] in RESULTADOS_FINALES
+            if r["resultado"] in resultados
         }

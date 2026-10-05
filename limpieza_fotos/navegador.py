@@ -39,9 +39,28 @@ RE_PROHIBIDO = re.compile(
 )
 # Aviso que muestra Google Fotos cuando la foto ya se movió a la papelera.
 RE_AVISO_PAPELERA = re.compile(
-    r"(movid|movió|movio|enviad|moved|sent).{0,40}(papelera|trash)", re.IGNORECASE
+    r"(movid|movi[óo]|movieron|enviad|envi[óo]|moved|sent).{0,40}(papelera|trash)"
+    r"|\b(deshacer|undo)\b",
+    re.IGNORECASE,
 )
 RE_DESHACER = re.compile(r"^(deshacer|undo)$", re.IGNORECASE)
+
+# Anota los textos que aparecen en la página (por ejemplo el aviso de abajo).
+_JS_OBSERVAR_TEXTOS = """() => {
+  window.__textosNuevos = [];
+  if (window.__observadorTextos) window.__observadorTextos.disconnect();
+  const anotar = t => { t = (t || '').trim().replace(/\\s+/g, ' ');
+                        if (t) window.__textosNuevos.push(t.slice(0, 150)); };
+  window.__observadorTextos = new MutationObserver(cambios => {
+    for (const c of cambios) {
+      if (c.type === 'characterData') anotar(c.target.textContent);
+      for (const n of c.addedNodes) anotar(n.innerText || n.textContent);
+    }
+  });
+  window.__observadorTextos.observe(document.body,
+      {childList: true, subtree: true, characterData: true});
+}"""
+_JS_TEXTOS_NUEVOS = "() => (window.__textosNuevos || []).slice(-15)"
 # Botón que aparece al ver una foto que ya está en la papelera.
 RE_RESTAURAR = re.compile(r"restaur|restore", re.IGNORECASE)
 SELECTOR_DIALOGO = '[role="dialog"], [role="alertdialog"], [aria-modal="true"]'
@@ -198,38 +217,43 @@ class GooglePhotos:
             return "fallo", "No se encontró el botón de eliminar. " + self._diagnostico(url)
 
         try:
+            self.page.evaluate(_JS_OBSERVAR_TEXTOS)
             boton.click(timeout=10_000)
             # Se aceptan los diálogos que aparezcan hasta ver una señal de que
             # Google movió la foto: cambia la URL o aparece el aviso con "Deshacer".
-            fin = time.monotonic() + 5
+            fin = time.monotonic() + 6
             while time.monotonic() < fin:
-                self.page.wait_for_timeout(500)
-                if self._aviso_de_eliminacion(url):
-                    self.page.wait_for_timeout(500)
-                    return "eliminado", "Movido a la papelera de Google Fotos"
+                self.page.wait_for_timeout(400)
                 confirmar = self._boton_confirmar()
                 if confirmar is not None:
                     confirmar.click(timeout=5_000)
-
-            # Sin señal clara: se vuelve a abrir la foto (sin apretar nada) para
-            # comprobar si sigue disponible.
-            self.page.wait_for_timeout(1000)
-            if not self._abrir_foto(url) or self._en_papelera():
-                return "eliminado", "Movido a la papelera de Google Fotos (comprobado al reabrir)"
+                    continue
+                if self._aviso_de_eliminacion(url):
+                    self.page.wait_for_timeout(500)
+                    return "eliminado", "Movido a la papelera de Google Fotos"
+            textos = self._textos_nuevos()
         except ErrorPlaywright as e:
             return "fallo", f"Error en la página: {str(e).splitlines()[0]}. " + self._diagnostico(url)
 
-        return "fallo", "Google Fotos no movió la foto a la papelera. " + self._diagnostico(url)
+        return "fallo", (
+            "Google Fotos no mostró que la foto se moviera a la papelera "
+            "(si ya estaba en la papelera, es normal). "
+            f"Textos nuevos en la página: {textos or 'ninguno'}. " + self._diagnostico(url)
+        )
 
     def _aviso_de_eliminacion(self, url: str) -> bool:
         if id_foto(url) not in self.page.url:
             return True
-        aviso = self.page.get_by_text(RE_AVISO_PAPELERA)
+        if any(RE_AVISO_PAPELERA.search(t) for t in self._textos_nuevos()):
+            return True
         deshacer = self.page.get_by_role("button", name=RE_DESHACER)
-        return (
-            self._primer_visible(aviso, segundos=0) is not None
-            or self._primer_visible(deshacer, segundos=0) is not None
-        )
+        return self._primer_visible(deshacer, segundos=0) is not None
+
+    def _textos_nuevos(self) -> list[str]:
+        try:
+            return self.page.evaluate(_JS_TEXTOS_NUEVOS)
+        except Exception:
+            return []
 
     def _en_papelera(self) -> bool:
         if "/trash" in self.page.url:
