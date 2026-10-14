@@ -101,6 +101,8 @@ def comando_verificar(args) -> int:
 
 
 def comando_eliminar(args) -> int:
+    from playwright.sync_api import Error as ErrorPlaywright
+
     from .navegador import GooglePhotos, SesionCerrada, buscar_chrome, perfil_predeterminado
 
     if not args.reporte.exists():
@@ -153,6 +155,11 @@ def comando_eliminar(args) -> int:
                 except SesionCerrada as ex:
                     print(f"\n{ex}. Se detiene el proceso.", file=sys.stderr)
                     break
+                except ErrorPlaywright as ex:
+                    # Una página que no carga (por ejemplo, por la conexión) no
+                    # corta todo el proceso: se anota y se sigue con la próxima.
+                    resultado = "fallo"
+                    detalle = f"Error del navegador: {str(ex).splitlines()[0]}"
 
             conteo[resultado] += 1
             print(f"[{i}/{len(pendientes)}] {resultado:13} {fila.titulo}  {detalle}")

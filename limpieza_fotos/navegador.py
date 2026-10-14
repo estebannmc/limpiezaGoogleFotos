@@ -44,6 +44,8 @@ RE_AVISO_PAPELERA = re.compile(
     re.IGNORECASE,
 )
 RE_DESHACER = re.compile(r"^(deshacer|undo)$", re.IGNORECASE)
+# Aviso mientras Google todavía está moviendo la foto.
+RE_MOVIENDO = re.compile(r"moviendo a la papelera|moving to (the )?trash", re.IGNORECASE)
 
 # Anota los textos que aparecen en la página (por ejemplo el aviso de abajo).
 _JS_OBSERVAR_TEXTOS = """() => {
@@ -177,10 +179,20 @@ class GooglePhotos:
             )
             self.page.goto(URL_INICIO, wait_until="domcontentloaded")
 
+    def _ir(self, url: str) -> None:
+        """Abre una página; si tarda demasiado, reintenta una vez."""
+        from playwright.sync_api import TimeoutError as TiempoAgotado
+
+        try:
+            self.page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+        except TiempoAgotado:
+            self.page.wait_for_timeout(5000)
+            self.page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+        self.page.wait_for_timeout(1500)
+
     def _abrir_foto(self, url: str) -> bool:
         """Abre la foto; devuelve False si Google Fotos no la encuentra."""
-        self.page.goto(url, wait_until="domcontentloaded")
-        self.page.wait_for_timeout(1500)
+        self._ir(url)
         if not self._en_google_fotos():
             raise SesionCerrada("Google pidió iniciar sesión de nuevo")
         return id_foto(url) in self.page.url
@@ -252,15 +264,23 @@ class GooglePhotos:
         )
 
     def _aparece_en_papelera(self, url: str) -> bool:
-        self.page.wait_for_timeout(1000)
-        self.page.goto(url_en_papelera(url), wait_until="domcontentloaded")
-        self.page.wait_for_timeout(1500)
-        if not self._en_google_fotos():
-            raise SesionCerrada("Google pidió iniciar sesión de nuevo")
-        if id_foto(url) not in self.page.url:
-            return False
-        restaurar = self.page.get_by_role("button", name=RE_RESTAURAR)
-        return self._primer_visible(restaurar, segundos=5) is not None
+        # Si Google muestra "Moviendo a la papelera...", se espera a que termine.
+        fin = time.monotonic() + 30
+        while (time.monotonic() < fin
+               and self._primer_visible(self.page.get_by_text(RE_MOVIENDO), segundos=0)):
+            self.page.wait_for_timeout(1000)
+
+        # Se mira dos veces, por si Google tarda en registrar el movimiento.
+        for espera in (1000, 5000):
+            self.page.wait_for_timeout(espera)
+            self._ir(url_en_papelera(url))
+            if not self._en_google_fotos():
+                raise SesionCerrada("Google pidió iniciar sesión de nuevo")
+            if id_foto(url) in self.page.url:
+                restaurar = self.page.get_by_role("button", name=RE_RESTAURAR)
+                if self._primer_visible(restaurar, segundos=5) is not None:
+                    return True
+        return False
 
     def _aviso_de_eliminacion(self, url: str) -> bool:
         if id_foto(url) not in self.page.url:
