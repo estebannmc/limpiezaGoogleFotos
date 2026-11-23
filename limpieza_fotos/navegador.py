@@ -65,7 +65,8 @@ _JS_OBSERVAR_TEXTOS = """() => {
 }"""
 _JS_TEXTOS_NUEVOS = "() => (window.__textosNuevos || []).slice(-15)"
 # Botón que aparece al ver una foto que ya está en la papelera.
-RE_RESTAURAR = re.compile(r"restaur|restore", re.IGNORECASE)
+# Solo "Restaurar" exacto: "Restaurar original" (fotos editadas) no indica papelera.
+RE_RESTAURAR = re.compile(r"^(restaurar|restore)$", re.IGNORECASE)
 SELECTOR_DIALOGO = '[role="dialog"], [role="alertdialog"], [aria-modal="true"]'
 CARPETA_DIAGNOSTICO = Path("diagnostico")
 
@@ -287,8 +288,11 @@ class GooglePhotos:
 
             # Google suele mover la foto sin ningún aviso: se comprueba si ya
             # aparece en la papelera (solo se mira, no se aprieta nada ahí).
-            if self._aparece_en_papelera(url):
-                return "eliminado", "Movido a la papelera de Google Fotos (comprobado en la papelera)"
+            evidencia = self._aparece_en_papelera(url)
+            if evidencia:
+                return "eliminado", (
+                    f"Movido a la papelera de Google Fotos (comprobado en la papelera: {evidencia})"
+                )
         except ErrorPlaywright as e:
             return "fallo", f"Error en la página: {str(e).splitlines()[0]}. " + self._diagnostico(url)
 
@@ -297,7 +301,8 @@ class GooglePhotos:
             f"Textos nuevos en la página: {textos or 'ninguno'}. " + self._diagnostico(url)
         )
 
-    def _aparece_en_papelera(self, url: str) -> bool:
+    def _aparece_en_papelera(self, url: str) -> str:
+        """Devuelve lo que se vio si la foto está en la papelera, o "" si no está."""
         # Si Google muestra "Moviendo a la papelera...", se espera a que termine.
         fin = time.monotonic() + 30
         while (time.monotonic() < fin
@@ -310,11 +315,28 @@ class GooglePhotos:
             self._ir(url_en_papelera(url))
             if not self._en_google_fotos():
                 raise SesionCerrada("Google pidió iniciar sesión de nuevo")
-            if id_foto(url) in self.page.url:
-                restaurar = self.page.get_by_role("button", name=RE_RESTAURAR)
-                if self._primer_visible(restaurar, segundos=5) is not None:
-                    return True
-        return False
+            evidencia = self._vista_de_papelera(url)
+            if evidencia:
+                return evidencia
+        return ""
+
+    def _vista_de_papelera(self, url: str) -> str:
+        """Comprueba que la página muestre esta foto dentro de la papelera.
+
+        Hacen falta las tres cosas: la URL /trash/ID, el botón "Restaurar" y que
+        no esté el botón "Mover a la papelera" (que solo tienen las fotos activas).
+        """
+        ruta = urlparse(self.page.url).path
+        if f"/trash/{id_foto(url)}" not in ruta:
+            return ""
+        restaurar = self._primer_visible(
+            self.page.get_by_role("button", name=RE_RESTAURAR), segundos=5
+        )
+        if restaurar is None:
+            return ""
+        if self._primer_visible(self.page.get_by_role("button", name=RE_BOTON_ELIMINAR), segundos=0):
+            return ""
+        return f"URL {ruta}, botón '{_nombre(restaurar)}'"
 
     def _aviso_de_eliminacion(self, url: str) -> bool:
         if id_foto(url) not in self.page.url:
@@ -331,10 +353,14 @@ class GooglePhotos:
             return []
 
     def _en_papelera(self) -> bool:
-        if "/trash" in self.page.url:
+        """La foto abierta se muestra como parte de la papelera (sin botón para moverla)."""
+        if "/trash/" in urlparse(self.page.url).path:
             return True
         restaurar = self.page.get_by_role("button", name=RE_RESTAURAR)
-        return self._primer_visible(restaurar, segundos=1) is not None
+        if self._primer_visible(restaurar, segundos=1) is None:
+            return False
+        mover = self.page.get_by_role("button", name=RE_BOTON_ELIMINAR)
+        return self._primer_visible(mover, segundos=0) is None
 
     def _boton_confirmar(self):
         botones = self.page.locator(SELECTOR_DIALOGO).get_by_role("button", name=RE_CONFIRMAR)
