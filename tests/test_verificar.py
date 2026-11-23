@@ -70,6 +70,19 @@ def test_dng_que_rawpy_no_lee_se_verifica_con_tifffile(tmp_path, monkeypatch):
     assert verificar_archivo(ruta).estado == ERROR
 
 
+def test_raw_que_en_realidad_es_jpg(tmp_path):
+    # Google Fotos en "Ahorro de espacio" convierte las RAW a JPG sin cambiarles el nombre.
+    ruta = tmp_path / "IMG_0128.DNG"
+    Image.new("RGB", (400, 300), (10, 120, 200)).save(ruta, format="JPEG")
+    resultado = verificar_archivo(ruta)
+    assert resultado.estado == OK
+    assert "JPEG" in resultado.detalle
+
+    datos = ruta.read_bytes()
+    ruta.write_bytes(datos[: len(datos) // 2])
+    assert verificar_archivo(ruta).estado == ERROR
+
+
 def test_avisos_inofensivos_de_ffmpeg():
     assert not video_danado(
         "[null @ 0x1e2c] Application provided invalid, non monotonically increasing dts to muxer\n"

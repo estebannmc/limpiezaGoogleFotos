@@ -74,6 +74,15 @@ def verificar_archivo(ruta: Path) -> Resultado:
         return _verificar_imagen(ruta)
     if ext in EXT_HEIF:
         return Resultado(PARCIAL, "Falta pillow-heif para verificar HEIC")
+    if ext in EXT_RAW:
+        # Google Fotos guarda en "Ahorro de espacio" las RAW convertidas a JPG
+        # (u otro formato) pero con el nombre original: se mira el contenido.
+        formato = formato_real(ruta)
+        if formato in ("JPEG", "PNG", "WEBP") or (formato == "HEIF" and _HEIF_DISPONIBLE):
+            resultado = _verificar_imagen(ruta)
+            if resultado.estado == OK:
+                return Resultado(OK, f"El archivo es {formato} aunque se llame {ext}")
+            return resultado
     if ext in EXT_RAW and _RAWPY_DISPONIBLE:
         return _verificar_raw(ruta)
     if ext in EXT_RAW:
@@ -81,6 +90,28 @@ def verificar_archivo(ruta: Path) -> Resultado:
     if ext in EXT_VIDEO:
         return _verificar_video(ruta)
     return Resultado(PARCIAL, "Formato sin verificación de contenido (solo tamaño)")
+
+
+def formato_real(ruta: Path) -> str:
+    """Identifica el formato por los primeros bytes del archivo, no por su nombre."""
+    try:
+        with open(ruta, "rb") as f:
+            cabecera = f.read(16)
+    except OSError:
+        return ""
+    if cabecera.startswith(b"\xff\xd8\xff"):
+        return "JPEG"
+    if cabecera.startswith(b"\x89PNG"):
+        return "PNG"
+    if cabecera.startswith(b"RIFF") and cabecera[8:12] == b"WEBP":
+        return "WEBP"
+    if cabecera[4:8] == b"ftyp" and cabecera[8:12] in (
+        b"heic", b"heix", b"hevc", b"hevx", b"mif1", b"msf1", b"avif", b"avis",
+    ):
+        return "HEIF"
+    if cabecera[:4] in (b"II*\x00", b"MM\x00*"):
+        return "TIFF"
+    return ""
 
 
 def _verificar_imagen(ruta: Path) -> Resultado:
@@ -110,8 +141,19 @@ def _verificar_raw(ruta: Path) -> Resultado:
             _decodificar_dng(ruta)
             return Resultado(OK)
         except Exception as e:
-            return Resultado(ERROR, f"RAW dañado: {error_rawpy}; tifffile: {str(e)[:120]}")
-    return Resultado(ERROR, f"RAW dañado: {error_rawpy}")
+            return Resultado(
+                ERROR, f"RAW dañado ({_cabecera(ruta)}): {error_rawpy}; tifffile: {str(e)[:80]}"
+            )
+    return Resultado(ERROR, f"RAW dañado ({_cabecera(ruta)}): {error_rawpy}")
+
+
+def _cabecera(ruta: Path) -> str:
+    """Primeros bytes del archivo, para identificar formatos desconocidos."""
+    try:
+        with open(ruta, "rb") as f:
+            return "primeros bytes " + f.read(12).hex(" ")
+    except OSError:
+        return "sin cabecera"
 
 
 def _decodificar_dng(ruta: Path) -> None:
