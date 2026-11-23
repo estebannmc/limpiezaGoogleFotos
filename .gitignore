@@ -27,5 +27,7 @@ Thumbs.db
 reporte.csv
 eliminados.csv
 sin_json.csv
+inventario.csv
+reporte*.csv
 diagnostico/
 .pytest_cache/

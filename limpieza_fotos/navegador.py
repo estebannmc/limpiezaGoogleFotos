@@ -22,6 +22,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 URL_INICIO = "https://photos.google.com/"
+URL_ARCHIVO = "https://photos.google.com/archive"
 HOST_FOTOS = "photos.google.com"
 
 # Botón de la barra superior de la foto. Solo se acepta "Mover a la papelera":
@@ -80,6 +81,12 @@ _JS_DIAGNOSTICO = """() => {
       .filter(visible).map(e => (e.getAttribute('role') || 'modal') + ': ' + texto(e, 150));
   return {botones: [...new Set(botones)].slice(0, 30), dialogos: dialogos.slice(0, 5)};
 }"""
+
+
+# Enlaces a fotos visibles en la grilla, con su descripción (tipo y fecha).
+_JS_ENLACES_FOTOS = """() => [...document.querySelectorAll('a[href*="/photo/"]')]
+    .map(a => [a.href, (a.getAttribute('aria-label') || '').trim()])"""
+_JS_TAMANO_VENTANA = "() => [window.innerWidth, window.innerHeight]"
 
 
 class SesionCerrada(RuntimeError):
@@ -178,6 +185,33 @@ class GooglePhotos:
                 "y después presioná Enter acá para continuar..."
             )
             self.page.goto(URL_INICIO, wait_until="domcontentloaded")
+
+    def listar(self, url_pagina: str, max_minutos: float = 60) -> dict[str, str]:
+        """Baja por una grilla de Google Fotos y anota cada foto (id -> descripción).
+
+        Solo desplaza la página con la rueda del mouse: no aprieta ningún botón.
+        """
+        self._ir(url_pagina)
+        if not self._en_google_fotos():
+            raise SesionCerrada("Google pidió iniciar sesión de nuevo")
+        ancho, alto = self.page.evaluate(_JS_TAMANO_VENTANA)
+        self.page.mouse.move(ancho / 2, alto / 2)
+
+        encontrados: dict[str, str] = {}
+        sin_novedad = 0
+        fin = time.monotonic() + max_minutos * 60
+        while sin_novedad < 10 and time.monotonic() < fin:
+            antes = len(encontrados)
+            for enlace, descripcion in self.page.evaluate(_JS_ENLACES_FOTOS):
+                encontrados.setdefault(id_foto(enlace), descripcion)
+            if len(encontrados) > antes:
+                sin_novedad = 0
+                print(f"  {len(encontrados)} fotos encontradas...", flush=True)
+            else:
+                sin_novedad += 1
+            self.page.mouse.wheel(0, alto * 0.8)
+            self.page.wait_for_timeout(800)
+        return encontrados
 
     def _ir(self, url: str) -> None:
         """Abre una página; si tarda demasiado, reintenta una vez."""

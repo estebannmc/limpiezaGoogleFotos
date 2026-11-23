@@ -97,6 +97,27 @@ sesión, el proceso se detiene.
 Opciones útiles: `--limite N`, `--pausa 3` (segundos entre fotos),
 `--incluir-parcial`, `--chrome "C:\ruta\chrome.exe"`.
 
+### 4. Ver qué queda en Google Fotos
+
+```powershell
+python -m limpieza_fotos inventario
+```
+
+Recorre la biblioteca y la sección Archivo de Google Fotos en la misma ventana
+de Chrome (solo baja por la página, no aprieta nada) y compara cada foto con
+`reporte.csv`, `reporte2.csv` y `eliminados.csv`. El resultado queda en
+`inventario.csv`, con la situación de cada foto:
+
+| Situación | Qué significa |
+|---|---|
+| no aparece en ningún Takeout | no hay copia local: no se puede borrar con este script |
+| el Takeout trajo el JSON sin la foto | Google exportó los datos pero no el archivo |
+| dañada en los Takeout | la copia local no se pudo abrir completa |
+| verificada en un Takeout: falta borrarla | se puede borrar con `eliminar` |
+| figura como eliminada pero sigue en Google | el borrado no se completó: revisarla a mano |
+
+La "Carpeta privada" no se ve en la web de Google Fotos, así que no se incluye.
+
 ## Si algo falla
 
 - **Google no deja iniciar sesión** ("este navegador puede no ser seguro"):

@@ -1,4 +1,4 @@
-"""Línea de comandos: ``python -m limpieza_fotos verificar|eliminar``."""
+"""Línea de comandos: ``python -m limpieza_fotos verificar|eliminar|inventario``."""
 
 from __future__ import annotations
 
@@ -51,9 +51,26 @@ def main(argv: list[str] | None = None) -> int:
     e.add_argument("--pausa", type=float, default=2.0,
                    help="Segundos de espera entre elementos (por defecto 2).")
 
+    n = sub.add_parser(
+        "inventario",
+        help="Lista lo que queda en Google Fotos y lo compara con los Takeout (no borra nada).",
+    )
+    n.add_argument("--reporte", type=Path, action="append",
+                   help="Reporte de un Takeout; se puede repetir. "
+                        "Por defecto, reporte.csv y reporte2.csv si existen.")
+    n.add_argument("--registro", type=Path, default=Path("eliminados.csv"))
+    n.add_argument("--salida", type=Path, default=Path("inventario.csv"))
+    n.add_argument("--sin-archivo-google", action="store_true",
+                   help="No revisar la sección Archivo de Google Fotos.")
+    n.add_argument("--chrome", type=Path, help="Ruta a chrome.exe si no se detecta sola.")
+    n.add_argument("--perfil", type=Path, help="Carpeta del perfil de Chrome para este script.")
+    n.add_argument("--puerto", type=int, default=9222)
+
     args = parser.parse_args(argv)
     if args.comando == "verificar":
         return comando_verificar(args)
+    if args.comando == "inventario":
+        return comando_inventario(args)
     return comando_eliminar(args)
 
 
@@ -176,6 +193,89 @@ def comando_eliminar(args) -> int:
     print("\nResumen: " + ", ".join(f"{k}={v}" for k, v in sorted(conteo.items())))
     if not args.simulacro:
         print(f"Registro guardado en {args.registro}")
+    return 0
+
+
+SIGUE_PESE_A_ELIMINADO = "figura como eliminada pero sigue en Google"
+FALTA_BORRAR = "verificada en un Takeout: falta borrarla"
+DANADA = "dañada en los Takeout"
+SIN_FOTO = "el Takeout trajo el JSON sin la foto"
+SIN_VERIFICAR = "en un Takeout, sin verificar del todo"
+NO_ESTA = "no aparece en ningún Takeout"
+
+
+def clasificar(resultado_registro: str | None, estados: list[tuple[str, str]]) -> str:
+    """Explica por qué una foto sigue en Google Fotos.
+
+    estados: (nombre del reporte, estado) de cada Takeout donde aparece.
+    """
+    if resultado_registro == "eliminado":
+        return SIGUE_PESE_A_ELIMINADO
+    if not estados:
+        return NO_ESTA
+    vistos = {estado for _, estado in estados}
+    if OK in vistos:
+        return FALTA_BORRAR
+    if verificar.ERROR in vistos:
+        return DANADA
+    if PARCIAL in vistos:
+        return SIN_VERIFICAR
+    return SIN_FOTO
+
+
+def comando_inventario(args) -> int:
+    from .navegador import (
+        URL_ARCHIVO, URL_INICIO, GooglePhotos, SesionCerrada, buscar_chrome, id_foto,
+        perfil_predeterminado,
+    )
+
+    reportes = args.reporte or [p for p in (Path("reporte.csv"), Path("reporte2.csv")) if p.exists()]
+    estados: dict[str, list[tuple[str, str]]] = {}
+    for ruta in reportes:
+        if not ruta.exists():
+            print(f"No existe {ruta}", file=sys.stderr)
+            return 1
+        for fila in reporte.leer_reporte(ruta):
+            estados.setdefault(id_foto(fila.url), []).append((ruta.stem, fila.estado))
+    registro = {id_foto(u): r for u, r in reporte.ultimos_resultados(args.registro).items()}
+    print(f"Comparando con: {', '.join(str(r) for r in reportes) or 'ningún reporte'}")
+
+    chrome = args.chrome or buscar_chrome()
+    if chrome is None or not chrome.exists():
+        print("No se encontró Chrome. Indicá la ruta con --chrome", file=sys.stderr)
+        return 1
+
+    paginas = [("Fotos", URL_INICIO)]
+    if not args.sin_archivo_google:
+        paginas.append(("Archivo", URL_ARCHIVO))
+    en_google: dict[str, tuple[str, str]] = {}
+    try:
+        with GooglePhotos(chrome, args.perfil or perfil_predeterminado(), args.puerto) as fotos:
+            fotos.asegurar_sesion()
+            for donde, url in paginas:
+                print(f"Recorriendo {donde} en Google Fotos (solo se lee, no se borra nada)...")
+                for id_, descripcion in fotos.listar(url).items():
+                    en_google.setdefault(id_, (descripcion, donde))
+    except SesionCerrada as ex:
+        print(f"\n{ex}. Se detiene el proceso.", file=sys.stderr)
+        return 1
+
+    filas = []
+    for id_, (descripcion, donde) in en_google.items():
+        lista = estados.get(id_, [])
+        filas.append({
+            "situacion": clasificar(registro.get(id_), lista),
+            "descripcion": descripcion,
+            "donde": donde,
+            "en_takeouts": ", ".join(f"{nombre}={estado}" for nombre, estado in lista),
+            "url": f"https://photos.google.com/photo/{id_}",
+        })
+    filas.sort(key=lambda f: (f["situacion"], f["descripcion"]))
+    reporte.escribir_inventario(args.salida, filas)
+
+    print(f"\n{len(filas)} fotos siguen en Google Fotos. Detalle en {args.salida}")
+    for situacion, cantidad in Counter(f["situacion"] for f in filas).most_common():
+        print(f"  {cantidad:6}  {situacion}")
     return 0
 
 

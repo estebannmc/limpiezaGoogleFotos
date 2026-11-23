@@ -153,3 +153,12 @@ def test_registro_omite_lo_ya_eliminado(tmp_path):
     reporte.registrar(registro, "eliminado", fila)
     reporte.registrar(registro, "fallo", otra, "sin botón")
     assert reporte.urls_procesadas(registro) == {fila.url}
+
+
+def test_clasificar_inventario():
+    assert cli.clasificar("eliminado", [("reporte", OK)]) == cli.SIGUE_PESE_A_ELIMINADO
+    assert cli.clasificar(None, []) == cli.NO_ESTA
+    assert cli.clasificar("fallo", [("reporte", ERROR), ("reporte2", OK)]) == cli.FALTA_BORRAR
+    assert cli.clasificar(None, [("reporte", ERROR), ("reporte2", SIN_ARCHIVO)]) == cli.DANADA
+    assert cli.clasificar(None, [("reporte2", PARCIAL)]) == cli.SIN_VERIFICAR
+    assert cli.clasificar(None, [("reporte2", SIN_ARCHIVO)]) == cli.SIN_FOTO

@@ -93,3 +93,21 @@ def urls_con_resultado(ruta: Path, resultados: set[str]) -> set[str]:
             for r in csv.DictReader(f, delimiter=SEPARADOR)
             if r["resultado"] in resultados
         }
+
+
+def ultimos_resultados(ruta: Path) -> dict[str, str]:
+    """Último resultado registrado para cada URL."""
+    if not ruta.exists():
+        return {}
+    with open(ruta, newline="", encoding=CODIFICACION) as f:
+        return {r["url"]: r["resultado"] for r in csv.DictReader(f, delimiter=SEPARADOR)}
+
+
+CAMPOS_INVENTARIO = ["situacion", "descripcion", "donde", "en_takeouts", "url"]
+
+
+def escribir_inventario(ruta: Path, filas: list[dict[str, str]]) -> None:
+    with open(ruta, "w", newline="", encoding=CODIFICACION) as f:
+        w = csv.DictWriter(f, CAMPOS_INVENTARIO, delimiter=SEPARADOR)
+        w.writeheader()
+        w.writerows(filas)
