@@ -162,3 +162,13 @@ def test_clasificar_inventario():
     assert cli.clasificar(None, [("reporte", ERROR), ("reporte2", SIN_ARCHIVO)]) == cli.DANADA
     assert cli.clasificar(None, [("reporte2", PARCIAL)]) == cli.SIN_VERIFICAR
     assert cli.clasificar(None, [("reporte2", SIN_ARCHIVO)]) == cli.SIN_FOTO
+
+
+def test_ultimo_resultado_manda(tmp_path):
+    registro = tmp_path / "eliminados.csv"
+    fila = reporte.Fila("https://photos.google.com/photo/A", "a.jpg", OK, "", [])
+    reporte.registrar(registro, "eliminado", fila)
+    assert reporte.urls_procesadas(registro) == {fila.url}
+    reporte.registrar(registro, "sigue_en_google", fila, "el borrado no se completó")
+    assert reporte.urls_procesadas(registro) == set()
+    assert reporte.ultimos_resultados(registro)[fila.url]["resultado"] == "sigue_en_google"

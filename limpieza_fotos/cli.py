@@ -237,7 +237,7 @@ def comando_inventario(args) -> int:
             return 1
         for fila in reporte.leer_reporte(ruta):
             estados.setdefault(id_foto(fila.url), []).append((ruta.stem, fila.estado))
-    registro = {id_foto(u): r for u, r in reporte.ultimos_resultados(args.registro).items()}
+    registro = {id_foto(u): fila for u, fila in reporte.ultimos_resultados(args.registro).items()}
     print(f"Comparando con: {', '.join(str(r) for r in reportes) or 'ningún reporte'}")
 
     chrome = args.chrome or buscar_chrome()
@@ -261,21 +261,37 @@ def comando_inventario(args) -> int:
         return 1
 
     filas = []
+    reabiertas = 0
     for id_, (descripcion, donde) in en_google.items():
         lista = estados.get(id_, [])
+        registrada = registro.get(id_)
+        situacion = clasificar(registrada["resultado"] if registrada else None, lista)
         filas.append({
-            "situacion": clasificar(registro.get(id_), lista),
+            "situacion": situacion,
             "descripcion": descripcion,
             "donde": donde,
             "en_takeouts": ", ".join(f"{nombre}={estado}" for nombre, estado in lista),
+            "registro": (
+                f"{registrada['fecha']} {registrada['resultado']}: {registrada['detalle'][:150]}"
+                if registrada else ""
+            ),
             "url": f"https://photos.google.com/photo/{id_}",
         })
+        if situacion == SIGUE_PESE_A_ELIMINADO:
+            # Se vuelve a dejar pendiente para que "eliminar" la intente de nuevo.
+            fila = reporte.Fila(registrada["url"], registrada["titulo"], "", "", [])
+            reporte.registrar(args.registro, "sigue_en_google", fila,
+                              "El inventario la encontró en Google: el borrado no se completó")
+            reabiertas += 1
     filas.sort(key=lambda f: (f["situacion"], f["descripcion"]))
     reporte.escribir_inventario(args.salida, filas)
 
     print(f"\n{len(filas)} fotos siguen en Google Fotos. Detalle en {args.salida}")
     for situacion, cantidad in Counter(f["situacion"] for f in filas).most_common():
         print(f"  {cantidad:6}  {situacion}")
+    if reabiertas:
+        print(f"\n{reabiertas} fotos que figuraban como eliminadas quedaron pendientes otra vez "
+              f"en {args.registro}: 'eliminar' las va a reintentar.")
     return 0
 
 

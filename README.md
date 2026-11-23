@@ -114,7 +114,7 @@ de Chrome (solo baja por la página, no aprieta nada) y compara cada foto con
 | el Takeout trajo el JSON sin la foto | Google exportó los datos pero no el archivo |
 | dañada en los Takeout | la copia local no se pudo abrir completa |
 | verificada en un Takeout: falta borrarla | se puede borrar con `eliminar` |
-| figura como eliminada pero sigue en Google | el borrado no se completó: revisarla a mano |
+| figura como eliminada pero sigue en Google | el borrado no se completó: queda pendiente y `eliminar` la reintenta |
 
 La "Carpeta privada" no se ve en la web de Google Fotos, así que no se incluye.
 

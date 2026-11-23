@@ -81,7 +81,11 @@ def registrar(ruta: Path, resultado: str, fila: Fila, detalle: str = "") -> None
 
 
 def urls_procesadas(ruta: Path) -> set[str]:
-    return urls_con_resultado(ruta, RESULTADOS_FINALES)
+    """URLs cuyo último resultado no requiere reintentar."""
+    return {
+        url for url, fila in ultimos_resultados(ruta).items()
+        if fila["resultado"] in RESULTADOS_FINALES
+    }
 
 
 def urls_con_resultado(ruta: Path, resultados: set[str]) -> set[str]:
@@ -95,15 +99,15 @@ def urls_con_resultado(ruta: Path, resultados: set[str]) -> set[str]:
         }
 
 
-def ultimos_resultados(ruta: Path) -> dict[str, str]:
-    """Último resultado registrado para cada URL."""
+def ultimos_resultados(ruta: Path) -> dict[str, dict[str, str]]:
+    """Última fila del registro (fecha, resultado, detalle...) para cada URL."""
     if not ruta.exists():
         return {}
     with open(ruta, newline="", encoding=CODIFICACION) as f:
-        return {r["url"]: r["resultado"] for r in csv.DictReader(f, delimiter=SEPARADOR)}
+        return {r["url"]: r for r in csv.DictReader(f, delimiter=SEPARADOR)}
 
 
-CAMPOS_INVENTARIO = ["situacion", "descripcion", "donde", "en_takeouts", "url"]
+CAMPOS_INVENTARIO = ["situacion", "descripcion", "donde", "en_takeouts", "registro", "url"]
 
 
 def escribir_inventario(ruta: Path, filas: list[dict[str, str]]) -> None:
