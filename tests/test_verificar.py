@@ -48,6 +48,28 @@ def test_raw_danado(tmp_path):
     assert verificar_archivo(ruta).estado == ERROR
 
 
+@pytest.mark.skipif(not verificar._TIFFFILE_DISPONIBLE, reason="requiere tifffile")
+def test_dng_que_rawpy_no_lee_se_verifica_con_tifffile(tmp_path, monkeypatch):
+    import numpy as np
+    import tifffile
+
+    ruta = tmp_path / "proraw.dng"
+    imagen = np.random.default_rng(0).integers(0, 4096, (256, 384, 3)).astype("uint16")
+    tifffile.imwrite(ruta, imagen, compression="jpegxl", tile=(128, 128), photometric="rgb")
+
+    def rawpy_falla(_ruta):
+        raise RuntimeError("Unsupported file format or not RAW file")
+
+    monkeypatch.setattr(verificar, "_RAWPY_DISPONIBLE", True)
+    monkeypatch.setattr(verificar, "rawpy", type("R", (), {"imread": staticmethod(rawpy_falla)}),
+                        raising=False)
+    assert verificar_archivo(ruta).estado == OK
+
+    datos = ruta.read_bytes()
+    ruta.write_bytes(datos[: int(len(datos) * 0.7)])
+    assert verificar_archivo(ruta).estado == ERROR
+
+
 def test_avisos_inofensivos_de_ffmpeg():
     assert not video_danado(
         "[null @ 0x1e2c] Application provided invalid, non monotonically increasing dts to muxer\n"

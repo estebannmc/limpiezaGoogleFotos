@@ -44,6 +44,16 @@ try:
 except ImportError:
     _RAWPY_DISPONIBLE = False
 
+# Segunda opción para DNG: lee también los ProRAW comprimidos con JPEG XL de los
+# iPhone recientes, que rawpy no siempre entiende.
+try:
+    import imagecodecs  # noqa: F401  (decodificadores que usa tifffile)
+    import tifffile
+
+    _TIFFFILE_DISPONIBLE = True
+except ImportError:
+    _TIFFFILE_DISPONIBLE = False
+
 
 @dataclass(frozen=True)
 class Resultado:
@@ -92,9 +102,38 @@ def _verificar_raw(ruta: Path) -> Resultado:
     try:
         with rawpy.imread(str(ruta)) as raw:
             raw.raw_image_visible.max()  # obliga a leer todos los datos
+        return Resultado(OK)
     except Exception as e:
-        return Resultado(ERROR, f"RAW dañado: {e}")
-    return Resultado(OK)
+        error_rawpy = e
+    if ruta.suffix.lower() == ".dng" and _TIFFFILE_DISPONIBLE:
+        try:
+            _decodificar_dng(ruta)
+            return Resultado(OK)
+        except Exception as e:
+            return Resultado(ERROR, f"RAW dañado: {error_rawpy}; tifffile: {str(e)[:120]}")
+    return Resultado(ERROR, f"RAW dañado: {error_rawpy}")
+
+
+def _decodificar_dng(ruta: Path) -> None:
+    """Decodifica todas las imágenes del DNG (la RAW y las vistas previas).
+
+    Falla si no hay ninguna imagen principal (NewSubfileType 0): las vistas
+    previas solas no prueban que la foto RAW esté completa.
+    """
+    principales = 0
+    tamano = ruta.stat().st_size
+    with tifffile.TiffFile(ruta) as dng:
+        for pagina in dng.pages:
+            for imagen in [pagina, *(pagina.pages or [])]:
+                # tifffile rellena en silencio lo que falta de un archivo cortado,
+                # así que se comprueba que todos los datos estén dentro del archivo.
+                if any(o + c > tamano for o, c in zip(imagen.dataoffsets, imagen.databytecounts)):
+                    raise ValueError("faltan datos de la imagen: el archivo está cortado")
+                datos = imagen.asarray()
+                if imagen.subfiletype == 0 and datos.size:
+                    principales += 1
+    if not principales:
+        raise ValueError("el DNG no tiene imagen principal")
 
 
 def _verificar_video(ruta: Path) -> Resultado:
